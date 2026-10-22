@@ -1,0 +1,9 @@
+{
+  "name": "TECNO: A Ilha Digital",
+  "short_name": "TECNO",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#030814",
+  "theme_color": "#00f0ff"
+}
