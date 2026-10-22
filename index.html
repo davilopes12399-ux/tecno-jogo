@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TECNO: A Ilha Digital</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#00f0ff">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #030814; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { width: 100%; height: 100%; display: block; background: #050b18; }
+        
+        /* HUD Interface */
+        #ui { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; pointer-events: none; z-index: 10; font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+        .hud-box { background: rgba(5, 11, 24, 0.75); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(0, 240, 255, 0.4); box-shadow: 0 0 10px rgba(0, 240, 255, 0.2); }
+        .hud-val { color: #00f0ff; font-size: 13px; }
+
+        /* Mobile Controls Overlay */
+        #controls { position: absolute; bottom: 20px; left: 0; width: 100%; display: flex; justify-content: space-between; padding: 0 24px; pointer-events: none; z-index: 20; }
+        .btn-group { display: flex; gap: 12px; pointer-events: auto; }
+        .btn { width: 60px; height: 60px; background: rgba(0, 240, 255, 0.15); border: 2px solid #00f0ff; border-radius: 50%; color: #fff; font-size: 20px; display: flex; align-items: center; justify-content: center; touch-action: manipulation; backdrop-filter: blur(4px); }
+        .btn:active { background: rgba(0, 240, 255, 0.6); transform: scale(0.92); }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="canvas"></canvas>
+        <div id="ui">
+            <div class="hud-box">HP: <span id="hp" class="hud-val">100</span>%</div>
+            <div class="hud-box">BOOST: <span id="boost" class="hud-val">100</span>%</div>
+            <div class="hud-box">ARGOLAS: <span id="rings" class="hud-val">0</span></div>
+            <div class="hud-box">FASE: <span id="lvl" class="hud-val">1</span>/5</div>
+        </div>
+
+        <div id="controls">
+            <div class="btn-group">
+                <div class="btn" id="b-left">◀</div>
+                <div class="btn" id="b-right">▶</div>
+            </div>
+            <div class="btn-group">
+                <div class="btn" id="b-jump" style="background:rgba(0,255,136,0.2); border-color:#00ff88;">▲</div>
+                <div class="btn" id="b-boost" style="background:rgba(255,0,85,0.2); border-color:#ff0055;">⚡</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const cvs = document.getElementById('canvas');
+        const ctx = cvs.getContext('2d');
+
+        function resize() {
+            cvs.width = window.innerWidth;
+            cvs.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Audio System (Web Audio API)
+        let audioCtx = null;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(freq, type = 'sine', duration = 0.1) {
+            if (!audioCtx) return;
+            try {
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        }
+
+        // Game State
+        let gameState = 'START'; // 'START', 'PLAY', 'GAMEOVER'
+        let px = 100, py = cvs.height - 120, vx = 0, vy = 0;
+        let hp = 100, boost = 100, rings = 0, level = 1;
+        let keys = { left: false, right: false, jump: false, boost: false };
+
+        // Controls Bindings
+        function setupButton(id, keyName) {
+            const btn = document.getElementById(id);
+            const startHandler = (e) => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === 'START') gameState = 'PLAY';
+                keys[keyName] = true;
+            };
+            const endHandler = (e) => {
+                e.preventDefault();
+                keys[keyName] = false;
+            };
+
+            btn.addEventListener('touchstart', startHandler);
+            btn.addEventListener('touchend', endHandler);
+            btn.addEventListener('mousedown', startHandler);
+            btn.addEventListener('mouseup', endHandler);
+        }
+
+        setupButton('b-left', 'left');
+        setupButton('b-right', 'right');
+        setupButton('b-jump', 'jump');
+        setupButton('b-boost', 'boost');
+
+        window.addEventListener('touchstart', () => {
+            initAudio();
+            if (gameState === 'START') gameState = 'PLAY';
+        });
+        window.addEventListener('click', () => {
+            initAudio();
+            if (gameState === 'START') gameState = 'PLAY';
+        });
+
+        // Game Loop
+        function loop() {
+            ctx.clearRect(0, 0, cvs.width, cvs.height);
+            let groundY = cvs.height - 70;
+
+            if (gameState === 'START') {
+                // Background Effect
+                ctx.fillStyle = '#050b18';
+                ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+                // Title Text
+                ctx.fillStyle = '#00f0ff';
+                ctx.font = '900 24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#00f0ff';
+                ctx.shadowBlur = 15;
+                ctx.fillText('TECNO: A ILHA DIGITAL', cvs.width / 2, cvs.height / 2 - 30);
+
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('TOQUE NO ECRÃ PARA INICIAR', cvs.width / 2, cvs.height / 2 + 20);
+
+            } else if (gameState === 'PLAY') {
+                // Physics & Movement
+                let moveSpeed = keys.boost && boost > 0 ? 8 : 4.5;
+                if (keys.boost && boost > 0) boost = Math.max(0, boost - 0.4);
+                else if (boost < 100) boost = Math.min(100, boost + 0.2);
+
+                if (keys.left) vx = -moveSpeed;
+                else if (keys.right) vx = moveSpeed;
+                else vx *= 0.8;
+
+                if (keys.jump && py >= groundY - 20) {
+                    vy = -13;
+                    playSound(440, 'square', 0.15);
+                }
+                vy += 0.65; // Gravity
+                px += vx;
+                py += vy;
+
+                if (py > groundY - 20) {
+                    py = groundY - 20;
+                    vy = 0;
+                }
+
+                // Screen Boundaries
+                if (px < 20) px = 20;
+                if (px > cvs.width - 20) px = cvs.width - 20;
+
+                // Draw Ground
+                ctx.fillStyle = '#0d192e';
+                ctx.fillRect(0, groundY, cvs.width, cvs.height - groundY);
+                ctx.fillStyle = '#00f0ff';
+                ctx.fillRect(0, groundY, cvs.width, 3);
+
+                // Draw Hero TECNO
+                ctx.shadowColor = '#00f0ff';
+                ctx.shadowBlur = 10;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(px, py, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eye Direction
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#00f0ff';
+                ctx.beginPath();
+                ctx.arc(px + (vx >= 0 ? 6 : -6), py - 2, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // HUD Values Update
+                document.getElementById('hp').innerText = Math.round(hp);
+                document.getElementById('boost').innerText = Math.round(boost);
+                document.getElementById('rings').innerText = rings;
+                document.getElementById('lvl').innerText = level;
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
