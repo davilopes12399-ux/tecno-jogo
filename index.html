@@ -1,0 +1,292 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>TECNO: A Ilha Digital</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#06101f;color:white;font-family:Arial,sans-serif;touch-action:none}
+canvas{display:block;width:100vw;height:100dvh;background:#081b35}
+#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(#07172dcc,#020814ee);z-index:5;text-align:center}
+.panel{padding:25px;border:2px solid #49dfff;border-radius:22px;background:#0b2345ee;box-shadow:0 0 40px #00aaff88;max-width:90%}
+h1{font-size:clamp(28px,7vw,52px);color:#8cecff;text-shadow:0 0 20px #00aaff}
+button{color:white;background:linear-gradient(#27bfff,#0753a8);border:2px solid #a1efff;border-radius:18px;font-weight:bold;padding:15px;margin:4px;box-shadow:0 4px 0 #03264b;touch-action:none}
+button:active{transform:scale(.94)}
+#hud{position:fixed;top:10px;left:10px;right:10px;display:none;pointer-events:none;font-weight:bold;text-shadow:0 2px 5px black}
+#controls{position:fixed;bottom:12px;left:0;right:0;display:none;justify-content:space-between;align-items:end;padding:0 8px;gap:4px}
+.group{display:flex;flex-wrap:wrap;gap:5px;max-width:75%;justify-content:flex-end}
+.ctrl{width:clamp(62px,15vw,90px);height:clamp(62px,15vw,90px);padding:3px;font-size:clamp(10px,2.5vw,14px);border-radius:22px;background:linear-gradient(145deg,#185681,#071b35);box-shadow:0 0 15px #00aaff77}
+@media(pointer:coarse){#controls{display:flex}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="menu">
+ <div class="panel">
+  <h1>TECNO</h1>
+  <h2>A ILHA DIGITAL</h2>
+  <p>Uma aventura de velocidade e energia!</p>
+  <p>Derrote os robôs e recupere as argolas.</p>
+  <button onclick="startGame()">▶ JOGAR</button>
+  <button onclick="toggleMusic()">♫ MÚSICA</button>
+  <p id="musicText">Música ativada após iniciar</p>
+ </div>
+</div>
+
+<div id="hud">❤️ <span id="hp">5</span>　🟡 <span id="rings">0</span>　⚡ <span id="energy">100</span>%</div>
+
+<div id="controls">
+ <div>
+  <button class="ctrl" data-k="left">◀</button>
+  <button class="ctrl" data-k="right">▶</button>
+ </div>
+ <div class="group">
+  <button class="ctrl" data-k="jump">PULO</button>
+  <button class="ctrl" data-k="boost">BOOST</button>
+  <button class="ctrl" data-k="homing">HOMING<br>ATTACK</button>
+  <button class="ctrl" data-k="shield">ESCUDO</button>
+ </div>
+</div>
+
+<script>
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+function resize(){c.width=innerWidth*devicePixelRatio;c.height=innerHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+addEventListener("resize",resize);resize();
+
+const keys={left:false,right:false,jump:false,boost:false,homing:false,shield:false};
+let running=false,frame=0,cam=0,ringCount=0,music=true,audio=null;
+let player,enemies,rings,particles,platforms;
+
+function reset(){
+ player={x:100,y:200,vx:0,vy:0,w:32,h:42,hp:5,energy:100,ground:false,jumps:0,face:1,shield:0,inv:0,homing:0};
+ enemies=[];rings=[];particles=[];platforms=[];
+ const floor=innerHeight-95;
+ platforms.push({x:0,y:floor,w:5000,h:150});
+ for(let x=260;x<4500;x+=230){
+  platforms.push({x,y:floor-100-(x%3)*35,w:110,h:18});
+  rings.push({x:x+50,y:floor-145-(x%3)*35,got:false});
+  enemies.push({x:x+130,y:floor-42,w:34,h:34,hp:1,alive:true});
+ }
+ cam=0;ringCount=0;
+}
+
+function startGame(){
+ document.getElementById("menu").style.display="none";
+ document.getElementById("hud").style.display="block";
+ reset();running=true;startMusic();
+}
+function toggleMusic(){music=!music;if(!music&&audio)audio.suspend();else if(audio)audio.resume();document.getElementById("musicText").textContent=music?"Música ligada":"Música desligada";if(music)startMusic()}
+
+function startMusic(){
+ if(!music)return;
+ try{
+  if(!audio)audio=new(window.AudioContext||window.webkitAudioContext)();
+  audio.resume();
+  if(window.musicTimer)return;
+  let notes=[440,523,659,784,659,523,392,523,659,880,784,659,523,392,440,523],i=0;
+  window.musicTimer=setInterval(()=>{
+   if(!music||!audio)return;
+   const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime;
+   o.type="square";o.frequency.value=notes[i++%notes.length];
+   g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.035,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+.14);
+   o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+.15);
+  },150);
+ }catch(e){}
+}
+
+function burst(x,y,color,n=12){
+ for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*8,vy:(Math.random()-.5)*8,life:25,color});
+}
+function hurt(){
+ if(player.inv>0||player.shield>0)return;
+ player.hp--;player.inv=90;player.vy=-7;
+ burst(player.x,player.y,"#ff426d");
+ if(player.hp<=0){running=false;document.getElementById("menu").style.display="flex";document.querySelector(".panel h1").textContent="FIM DE JOGO";document.querySelector(".panel p").textContent="Tente novamente e salve a ilha!"}
+}
+
+function update(){
+ if(!running)return;
+ frame++;
+ const floor=innerHeight-95;
+ if(keys.left){player.vx-=.65;player.face=-1}
+ if(keys.right){player.vx+=.65;player.face=1}
+ player.vx*=.88;player.vx=Math.max(-7,Math.min(7,player.vx));
+ if(keys.jump&&!player.jumping){
+  if(player.ground||player.jumps<2){
+   player.vy=player.jumps===0?-12:-10;
+   player.jumps++;player.ground=false;burst(player.x+15,player.y+40,"#66eaff",5);
+  }
+  player.jumping=true;
+ }
+ if(!keys.jump)player.jumping=false;
+
+ if(keys.boost&&player.energy>0){
+  player.vx=player.face*13;player.energy=Math.max(0,player.energy-1.2);
+  burst(player.x,player.y+20,"#38dfff",2);
+ }else player.energy=Math.min(100,player.energy+.25);
+
+ if(keys.shield&&player.energy>0){
+  player.shield=3;player.energy=Math.max(0,player.energy-.35);
+ }
+ if(!keys.shield)player.shield=0;
+
+ if(keys.homing&&!player.homing&&player.energy>=10){
+  let target=enemies.filter(e=>e.alive&&Math.abs(e.x-player.x)<300)
+   .sort((a,b)=>Math.abs(a.x-player.x)-Math.abs(b.x-player.x))[0];
+  if(target){
+   player.homing=18;player.target=target;player.energy-=10;
+   burst(player.x,player.y,"#a4f6ff",18);
+  }
+ }
+ if(player.homing>0){
+  let t=player.target;
+  if(t&&t.alive){
+   let dx=t.x-player.x,dy=t.y-player.y;
+   let d=Math.hypot(dx,dy)||1;
+   player.vx=dx/d*13;player.vy=dy/d*13;
+   if(d<35){t.alive=false;burst(t.x,t.y,"#ffb33d",24);player.homing=0;player.vy=-7;ringCount+=2}
+  }else player.homing=0;
+  player.homing--;
+ }
+ if(!keys.homing)player.homing=0;
+
+ player.vy+=.55;
+ if(player.vy>13)player.vy=13;
+ player.x+=player.vx;player.y+=player.vy;
+ player.ground=false;
+
+ for(const p of platforms){
+  if(player.x+player.w>p.x&&player.x<p.x+p.w&&player.y+player.h>=p.y&&player.y+player.h<=p.y+25&&player.vy>=0){
+   player.y=p.y-player.h;player.vy=0;player.ground=true;player.jumps=0;
+  }
+ }
+ if(player.y>innerHeight+100){player.y=100;player.hp--;player.vy=0}
+ if(player.inv>0)player.inv--;
+
+ for(const r of rings)if(!r.got&&Math.hypot(player.x-r.x,player.y-r.y)<35){r.got=true;ringCount++;player.energy=Math.min(100,player.energy+8);burst(r.x,r.y,"#ffe36b",10)}
+ for(const e of enemies)if(e.alive&&player.x+player.w>e.x&&player.x<e.x+e.w&&player.y+player.h>e.y&&player.y<e.y+e.h){
+  if(player.vy>1&&player.y+player.h<e.y+20){e.alive=false;player.vy=-8;burst(e.x,e.y,"#ff9b49",18)}
+  else hurt();
+ }
+ for(const p of particles){p.x+=p.vx;p.y+=p.vy;p.life--}
+ particles=particles.filter(p=>p.life>0);
+ cam=Math.max(0,player.x-innerWidth*.35);
+ document.getElementById("hp").textContent=player.hp;
+ document.getElementById("rings").textContent=ringCount;
+ document.getElementById("energy").textContent=Math.floor(player.energy);
+}
+
+function draw(){
+ const w=innerWidth,h=innerHeight,floor=h-95;
+ let bg=ctx.createLinearGradient(0,0,0,h);bg.addColorStop(0,"#07152e");bg.addColorStop(.55,"#123e70");bg.addColorStop(1,"#07121e");
+ ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+
+ // Estrelas e cidade digital
+ for(let i=0;i<75;i++){
+  let x=(i*137-frame*.15)%(w+50);let y=(i*71)%(h*.65);
+  ctx.fillStyle=i%3?"#4dbfff88":"#ffffff";
+  ctx.fillRect(x,y,2,2);
+ }
+ for(let i=0;i<18;i++){
+  let x=i*100-(cam*.25%100),bh=60+(i*47%150);
+  ctx.fillStyle="#102b4b";ctx.fillRect(x,h-95-bh,70,bh);
+  ctx.fillStyle="#1f7aa9";
+  for(let yy=h-95-bh+12;yy<h-100;yy+=20)
+   for(let xx=x+10;xx<x+65;xx+=18)ctx.fillRect(xx,yy,5,7);
+ }
+ ctx.save();ctx.translate(-cam,0);
+
+ // Chão e plataformas
+ for(const p of platforms){
+  const gr=ctx.createLinearGradient(0,p.y,0,p.y+p.h);
+  gr.addColorStop(0,"#44e6ff");gr.addColorStop(.12,"#23678f");gr.addColorStop(1,"#09172b");
+  ctx.fillStyle=gr;ctx.fillRect(p.x,p.y,p.w,p.h);
+  ctx.fillStyle="#a7f6ff";ctx.fillRect(p.x,p.y,p.w,4);
+ }
+ // Argolas
+ for(const r of rings)if(!r.got){
+  ctx.save();ctx.shadowColor="#ffe36b";ctx.shadowBlur=20;
+  ctx.strokeStyle="#ffe36b";ctx.lineWidth=5;
+  ctx.beginPath();ctx.ellipse(r.x,r.y,10,14,0,0,Math.PI*2);ctx.stroke();ctx.restore();
+ }
+ // Inimigos
+ for(const e of enemies)if(e.alive){
+  ctx.save();ctx.shadowColor="#ff376d";ctx.shadowBlur=18;
+  ctx.fillStyle="#a82d58";ctx.fillRect(e.x,e.y,e.w,e.h);
+  ctx.fillStyle="#ffebf3";ctx.fillRect(e.x+6,e.y+8,7,7);ctx.fillRect(e.x+22,e.y+8,7,7);
+  ctx.fillStyle="#111";ctx.fillRect(e.x+8,e.y+10,4,4);ctx.fillRect(e.x+24,e.y+10,4,4);
+  ctx.restore();
+ }
+ // Partículas
+ for(const p of particles){
+  ctx.globalAlpha=Math.max(0,p.life/25);ctx.fillStyle=p.color;
+  ctx.fillRect(p.x,p.y,5,5);
+ }
+ ctx.globalAlpha=1;
+
+ // TECNO - robô branco futurista
+ if(player.inv%10<5){
+  ctx.save();ctx.translate(player.x+16,player.y+20);
+  if(player.face<0)ctx.scale(-1,1);
+  if(keys.boost||player.homing>0){
+   ctx.shadowColor="#00dfff";ctx.shadowBlur=30;
+   ctx.fillStyle="#40cfff";ctx.beginPath();ctx.ellipse(-25,0,25,10,0,0,Math.PI*2);ctx.fill();
+  }
+  ctx.shadowColor="#9aeaff";ctx.shadowBlur=18;
+  ctx.fillStyle="#f1fbff";ctx.beginPath();ctx.roundRect(-15,-20,30,38,12);ctx.fill();
+  ctx.fillStyle="#172e49";ctx.beginPath();ctx.roundRect(-12,-12,24,13,6);ctx.fill();
+  ctx.fillStyle="#53eaff";ctx.fillRect(-8,-8,5,4);ctx.fillRect(4,-8,5,4);
+  ctx.fillStyle="#a9e8ff";ctx.fillRect(-10,18,7,7);ctx.fillRect(4,18,7,7);
+  ctx.shadowBlur=0;ctx.restore();
+ }
+ if(player.shield>0){
+  ctx.strokeStyle="#66f4ff";ctx.lineWidth=4;ctx.shadowColor="#00cfff";ctx.shadowBlur=25;
+  ctx.beginPath();ctx.ellipse(player.x+16,player.y+20,29,34,0,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;
+ }
+ ctx.restore();
+
+ // Mira do Homing
+ if(keys.homing){
+  ctx.strokeStyle="#fff";ctx.lineWidth=3;ctx.beginPath();ctx.arc(w/2,h/2,20,0,Math.PI*2);ctx.stroke();
+ }
+ // Barra de energia
+ ctx.fillStyle="#07101e";ctx.fillRect(12,h-14,150,7);
+ ctx.fillStyle="#3be8ff";ctx.fillRect(12,h-14,150*player.energy/100,7);
+}
+
+function loop(){update();draw();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+
+addEventListener("keydown",e=>{
+ const k=e.key.toLowerCase();
+ if(k==="arrowleft"||k==="a")keys.left=true;
+ if(k==="arrowright"||k==="d")keys.right=true;
+ if(k===" "||k==="arrowup")keys.jump=true;
+ if(k==="shift")keys.boost=true;
+ if(k==="x")keys.homing=true;
+ if(k==="z")keys.shield=true;
+});
+addEventListener("keyup",e=>{
+ const k=e.key.toLowerCase();
+ if(k==="arrowleft"||k==="a")keys.left=false;
+ if(k==="arrowright"||k==="d")keys.right=false;
+ if(k===" "||k==="arrowup")keys.jump=false;
+ if(k==="shift")keys.boost=false;
+ if(k==="x")keys.homing=false;
+ if(k==="z")keys.shield=false;
+});
+document.querySelectorAll("[data-k]").forEach(b=>{
+ const k=b.dataset.k;
+ const down=e=>{e.preventDefault();keys[k]=true};
+ const up=e=>{e.preventDefault();keys[k]=false};
+ b.addEventListener("pointerdown",down);
+ b.addEventListener("pointerup",up);
+ b.addEventListener("pointercancel",up);
+ b.addEventListener("pointerleave",up);
+});
+</script>
+</body>
+</html>
